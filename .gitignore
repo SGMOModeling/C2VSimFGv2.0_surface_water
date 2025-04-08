@@ -1,0 +1,8 @@
+*.gdbindexes
+*.gdbtable
+*.gdbtablx
+*.atx
+*.freelist
+*.horizon
+*.spx
+/Constrained_Head_BC/GIS/C2VSimFG_Lakes/GpMessages
