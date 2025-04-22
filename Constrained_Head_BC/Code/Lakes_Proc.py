@@ -102,12 +102,15 @@ def stor2elev(res_id, stor_df, c3_df):
     
     '''
     #TODO: remove (testing only)
-    stor_df = res_mon_dict[res_id]
+    # stor_df = res_mon_dict[res_id].copy()
+    
+    stor_df['VALUE_ELEV'] = np.nan
     
     res_df = c3_df.loc[c3_df['ID']==res_id,
                         ['ID','VALUE', 'VALUE_ELEV']]
     
-    concat_df = pd.concat([stor_df[['VALUE',
+    concat_df = pd.concat([stor_df[['Datetime_EOM',
+                                    'VALUE',
                                     'VALUE_ELEV']], 
                            res_df[['VALUE',
                                   'VALUE_ELEV']]],
@@ -117,18 +120,23 @@ def stor2elev(res_id, stor_df, c3_df):
     
     concat_df.sort_values(by='VALUE', inplace=True)
     
-    concat_df['VALUE_ELEV'].interpolate(method='slinear',
-                                        inplace=True,
+    concat_df['VALUE_ELEV'] = concat_df['VALUE_ELEV'].interpolate(method='slinear',
                                         limit_direction='both')
     
-    return elev_ts
+    concat_df.reset_index(inplace=True)
+    
+    concat_df = concat_df.dropna(subset='Datetime_EOM')
+    
+    concat_df.sort_values(by='Datetime_EOM', inplace=True)
+    
+    return concat_df
 
 # Function to read the C2VSim constrain head BC file
 def read_cbc_c2v():
     
     
     
-    return cbc_df
+    return
 
 
 #%% Read in folder/files
@@ -193,6 +201,7 @@ res_to_dl.head()
 start_date = '1950-01-01'
 end_date = ''
 res_mon_dict = {}
+c3_res_df = read_c3_res(res_to_dl)
 
 for stn in res_to_dl['ID']:
     
@@ -245,6 +254,23 @@ for stn in res_to_dl['ID']:
         # Add to be able to flag storage vs. elev
         res_mon_df['Sensor'] = sens_no
         
+        # Storage, AF
+        if sens_no == '15':
+            c3_stor_elev = c3_res_df.loc[c3_res_df['ID']==stn,
+                                         ['ID', 'storage','elevation']]
+            
+            c3_stor_elev.rename(columns={'storage': 'VALUE',
+                                         'elevation': 'VALUE_ELEV'},
+                                inplace=True)
+            
+            interp_df = stor2elev(stn, 
+                                  res_mon_df,
+                                  c3_stor_elev)
+            
+            res_mon_df = res_mon_df.merge(interp_df[['Datetime_EOM',
+                                                     'VALUE_ELEV']], 
+                                          on='Datetime_EOM')
+        
         # Write to file
         res_df.to_csv(stn+'_'+dur_code+'.csv', index=False)
         res_mon_df.to_csv(stn+'_monthly'+'.csv', index=False)
@@ -258,7 +284,7 @@ for stn in res_to_dl['ID']:
 # Find the applicable reservoirs
 # Get their rating tables?
 # Interpolate to get approx. reservoir elevations
-c3_res_df = read_c3_res(res_to_dl)
+
 
 
 for res_id in res_mon_dict:
@@ -279,11 +305,17 @@ for res_id in res_mon_dict:
                                      'elevation': 'VALUE_ELEV'},
                             inplace=True)
         
-        res_mon_dict[res_id].loc[:,'VALUE_ELEV'] = np.nan
+        # res_mon_dict[res_id].loc[:,'VALUE_ELEV'] = np.nan
         
-        res_mon_dict[res_id].loc[:,'VALUE_ELEV'] = stor2elev(res_id, 
-                                                       res_mon_dict[res_id],
-                                                       c3_stor_elev)
+        interp_df = stor2elev(res_id, 
+                              res_mon_dict[res_id],
+                              c3_stor_elev)
+        
+        res_mon_dict[res_id] = res_mon_dict[res_id].merge(interp_df[['Datetime_EOM',
+                                                                     'VALUE_ELEV']], 
+                                                          on='Datetime_EOM') 
+        
+        
 
     
 #%% Read in current time series BC file and add new data/extend time series
