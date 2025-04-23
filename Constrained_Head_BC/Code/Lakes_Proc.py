@@ -131,12 +131,64 @@ def stor2elev(res_id, stor_df, c3_df):
     
     return concat_df
 
-# Function to read the C2VSim constrain head BC file
+# Function to build full model timeseries
+def build_ts(ts, tunit):
+    '''
+    
+    Parameters
+    ----------
+    ts : series
+        Time series to analyze and fill any missing data
+    
+    tunit : string
+        Enter stress period time unit.
+            ME = month end
+            D = daily
+            
+            See list of offset aliases here: https://pandas.pydata.org/docs/user_guide/timeseries.html#timeseries-offset-aliases
+            ...
+
+    Returns
+    -------
+    fullts : series
+        Full time series with missing days/months/etc. filled in
+        
+    '''
+    
+    # Find the bounds
+    tmin = ts.min()
+    
+    tmax = ts.max()
+    
+    # Generate time spans
+    fullts = pd.date_range(start=tmin, end=tmax,freq=tunit)
+    
+    
+    return fullts
+
+# Function to read the C2VSim constrained head BC file
 def read_cbc_c2v():
     
+    # Read in CalSim3 reservoir info table
+    root = tk.Tk()
+    cbc_pth = filedialog.askopenfilename(title='Select Constrained Head Boundary Condition Specs file',
+                                       initialdir='..\Resources\C2VSim', filetypes=[('C2VSim dat', '.dat')])
+    root.destroy()
+    
+    cols = ['INODE',	
+            'ILAYER',
+            'ITSCOL',
+            'BH',
+            'BC',
+            'LBH',
+            'ITSCOLF',
+            'CFLOW',
+            'Notes']
     
     
-    return
+    cbc_df = pd.read_csv(cbc_pth, sep='\t+', skiprows=119, names=cols)
+    
+    return cbc_df
 
 
 #%% Read in folder/files
@@ -194,7 +246,8 @@ res_to_dl = pd.read_excel('cdec_reservoirs.xlsx', sheet_name='download_selection
 #TODO: refresh excel sheet (open & save) via code. Otherwise, vlookup names will be nan
 res_to_dl.head()
 
-#%% Request download data from CDEC
+#%% Request download data from CDEC, interpolate missing values, and 
+    # convert storage to elevation.
 
 #TODO: add sensor list/types/change depending on the dataset
 
@@ -205,7 +258,7 @@ c3_res_df = read_c3_res(res_to_dl)
 
 for stn in res_to_dl['ID']:
     
-    # Capture Woodward and others we want to correlate to CalSim, but aren't in CDEC
+    #CDEC reservoirs
     if isinstance(stn, str): 
         
         dur_code = res_to_dl.loc[res_to_dl['ID']==stn, 'Duration_Code'].values[0]
@@ -249,6 +302,19 @@ for stn in res_to_dl['ID']:
                                                     res_mon_df['Month'].astype(str)), format='%Y%m') + \
                                                     pd.tseries.offsets.MonthEnd(0)
         
+        # Add full time series (may be missing values in record)
+        ts = pd.Series(build_ts(res_mon_df['Datetime_EOM'], 'ME'))
+        ts.name='Datetime_EOM'
+        
+        # Merge into current 
+        res_mon_df = res_mon_df.merge(right=ts,
+                                      on = 'Datetime_EOM',
+                                      how = 'right')
+        
+        # Interpolate the missing values - assume equally-spaced linear
+        res_mon_df['VALUE'] = res_mon_df['VALUE'].interpolate(method='linear')
+        
+        
         res_mon_df['C2VSim_Date'] = res_mon_df['Datetime_EOM'].apply(lambda x: x.strftime('%m/%d/%Y_24:00'))
         
         # Add to be able to flag storage vs. elev
@@ -273,128 +339,72 @@ for stn in res_to_dl['ID']:
         
         # Write to file
         res_df.to_csv(stn+'_'+dur_code+'.csv', index=False)
-        res_mon_df.to_csv(stn+'_monthly'+'.csv', index=False)
+        res_mon_df.to_csv(stn+'_agg_monthly'+'.csv', index=False)
         res_mon_dict[stn] = res_mon_df
-        
+    
+    # Capture Woodward and others we want to correlate to CalSim, but aren't in CDEC        
     else:
         continue
-    # For applicable timeseries, convert monthly storage to reservoir elevations
 
-#%% Read in CalSim3 res_info.table
-# Find the applicable reservoirs
-# Get their rating tables?
-# Interpolate to get approx. reservoir elevations
+#%% Read in the current timeseries file, add new records, and columns
 
 
+#%% Read in current specs file
+cbc_df = read_cbc_c2v()
 
-for res_id in res_mon_dict:
-    
-    # Check for storage values vs. elevation
-    sens_val = res_mon_dict[res_id]['Sensor'].max()
-    
-    # Reservoir elevation, FT
-    if sens_val == '6':
-        continue
-    
-    # Storage, AF
-    elif sens_val == '15':
-        c3_stor_elev = c3_res_df.loc[c3_res_df['ID']==res_id,
-                                     ['ID', 'storage','elevation']]
-        
-        c3_stor_elev.rename(columns={'storage': 'VALUE',
-                                     'elevation': 'VALUE_ELEV'},
-                            inplace=True)
-        
-        # res_mon_dict[res_id].loc[:,'VALUE_ELEV'] = np.nan
-        
-        interp_df = stor2elev(res_id, 
-                              res_mon_dict[res_id],
-                              c3_stor_elev)
-        
-        res_mon_dict[res_id] = res_mon_dict[res_id].merge(interp_df[['Datetime_EOM',
-                                                                     'VALUE_ELEV']], 
-                                                          on='Datetime_EOM') 
-        
-        
+#%% Add nodes via geopandas
+# Start off not changing original specs. 
 
-    
-#%% Read in current time series BC file and add new data/extend time series
+import os
+import sys
+
+os.environ['GDAL_DATA'] = os.path.join(f'{os.sep}'.join(sys.executable.split(os.sep)[:-1]), 'Library', 'share', 'gdal')
+
+c2v_nodes_gdf = gpd.read_file(r'C:\Users\nanchor\Documents\C2VSim\C2VSim\c2vsimfg-v1_0_gis\C2VSimFG-V1_0_GIS\Shapefiles\C2VSimFG_Nodes.shp')
+nhd_lakes_gdf = gpd.read_file(r'C:\SGMBranch\29_C2VSim\C2VSim_Lakes\GIS\C2VSimFG_Lakes\C2VSimFG_Lakes.gdb',
+                              layer='NHD_C2VSimFG_LakesReservoirs',
+                              driver='OpenFileGDB') # has a warning: 198: RuntimeWarning: driver OpenFileGDB does not support open option DRIVER return ogr_read(
+
+# Intersect/overlay lakes with C2VSimFG gw nodes
+c2v_lake_int = gpd.sjoin(c2v_nodes_gdf, nhd_lakes_gdf.to_crs(epsg=26910),
+                         how='left')
+
+# Write to shapefile for manual iteration
+c2v_lake_int['gnis_name'].fillna('0', inplace=True)
+c2v_lake_int.to_file(os.path.join('.', 'output', 'c2v_lake_nodes.shp'))
+
+#TODO: LEFT OFF HERE!
+# Manually check/modify points
+ps = input('Once manually input, press [Enter] to continue...') or 'n'
+c2v_lake_nodes = gpd.read_file(os.path.join('.', 'output', 'c2v_lake_nodes.shp'))
 
 
 #%% 
 
 
 
-#%%
-
-cdec_res_codes = list(cdec_res_df['ID'])
-cdec_res_names = list(cdec_res_df['LAKE'].fillna(''))
-
-cdec_res_options = list(cdec_res_df['ID'] + ': ' + cdec_res_df['LAKE'].fillna(''))
-
-# Launch GUI
-# Initialize workspace/frames
-root = Tk()
-root.title('Select Reservoir Data to Download')
-mainframe = ttk.Frame(root, padding = '3 3 3 3')
-mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
-root.columnconfigure(0, weight=1)
-root.rowconfigure(0, weight=1)
-
-# Set variable
-selected_res = StringVar()
-
-# Create Combobox widget
-res_dropdown = ttk.Listbox(mainframe, selectmode='multiple', textvariable=selected_res, values=cdec_res_options)
-
-# Place widget in grid
-res_dropdown.grid(column=0, row=1, columnspan=2, sticky=(W,E))
-
-# Set default value
-res_dropdown.set('Select reservoir(s) to download')
-
-root.mainloop()
-
-# Label widget
-wrk_fldr_lbl = ttk.Label(mainframe, text='Select references folder:')
-wrk_fldr_lbl.grid(column=0, row=0, columnspan=2, sticky=(W,E))
-
-# Add URL box
-url = StringVar()
-url_entry = ttk.Entry(mainframe, width=60, textvariable=url)
-url_entry.grid(column=0, row=3, columnspan=2, sticky=(W,E))
-url_lbl = ttk.Label(mainframe, text='Input SGMA portal GSP URL:')
-url_lbl.grid(column=0, row=2, columnspan=2, sticky=(W,E))
-
-# Add buttons
-idir = os.path.join('..',
-                    '08_GSP_Submittals', 
-                    'GSP_Submittals', 
-                    '2022_GSP_Submittals')
-
-browsebut = ttk.Button(mainframe, text='Browse', command=lambda: browse_dialog(idir=idir))
-browsebut.grid(column=2, row=1, columnspan=2, sticky=W)
-
-confirmbut = ttk.Button(mainframe, text='Confirm', command=root.destroy)
-confirmbut.grid(column=1, row=4, sticky=E)
-
-cancelbut = ttk.Button(mainframe, text='Cancel', command=cancel)
-cancelbut.grid(column=2, row=4, sticky=(W,E))
-
-# Enter/return key defaults to activating the confirm button
-root.bind('<Return>', lambda z: confirmbut.invoke())
-
-for child in mainframe.winfo_children():
-    child.grid_configure(padx=5, pady=5)
-
-wrk_fldr_entry.focus()
-
-root.mainloop()
 
 
-# Once main loop exited, reassign variables for remainder of script
-wrk_fldr = wrk_fldr.get()
-url = url.get()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
