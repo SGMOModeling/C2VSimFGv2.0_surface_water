@@ -1,0 +1,30 @@
+TAB = (6) 2008-2025
+      (15) 1985-2025
+	- Year fill = 1968
+	- Start year avg. = 1991
+CMN = (6) 1985-2025
+	- Year fill = 1966
+	- Start year avg. = 1991
+BLB = (6) 1985-2025 (15) 1985-2025
+	- Year fill = 1965
+	- Vert datum = 1991
+NAT = (6D) 1985-2025  <-- Main one missing earlier daily data...no extra data from sensor 15. 
+      (15M) 1965-2025 <-- Need this
+	- Year fill = 1966
+MDO = (15) 1956-2025
+	- Year fill = 1960
+TLC = (15) 1955-2025
+	- Year fill = 1956
+
+
+Conductance - retrieve from stream nodes? Calculate from Kv, but need area of surrounding elements and an estimate of thickness, AEM?, element conductance matrices (output?)
+
+TAB
+CMN
+BLB
+
+NAT --> CoSANA
+MDO --> C2VSimTM
+TLC --> C2VSimTM
+Wood --> ESJWRM
+
