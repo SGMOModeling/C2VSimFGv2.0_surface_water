@@ -198,8 +198,30 @@ def read_cbc_c2v():
     
     #TODO: generalize...
     cbc_df = pd.read_csv(cbc_pth, sep='\t+', skiprows=skiprow,
-                         header=None, names=cols)
+                         header=None, names=cols, keep_default_na=False,
+                         na_filter=False)
     
+    #TODO: left off here
+    # Can't read GH new file, above not flexible enough
+    if all(cbc_df[cbc_df.columns[1:]].isna()):
+        # cbc_df = pd.read_csv(cbc_pth, sep='\s+', skiprows=skiprow,
+        #                      header=None, names=cols, na_filter=False)
+        
+        for col in cbc_df[cbc_df.columns[1:]]:
+            cbc_df[col] = cbc_df[col].fillna('')
+        
+        cbc_df.loc[:, 'Notes'] = cbc_df['INODE'].apply(lambda x: x.split('/')[1])
+        
+        cbc_df.loc[:, 'Notes'] = '/' + cbc_df.loc[:, 'Notes']
+        
+        cbc_df.loc[:, 'INODE'] = cbc_df['INODE'].apply(lambda x: x.split('/')[0].strip())
+        
+        split_df = cbc_df['INODE'].str.split(r'\s+', expand=True)
+        
+        split_df.columns = cbc_df.columns[:-1]
+        
+        cbc_df.loc[:, cbc_df.columns[:-1]] = split_df
+        
     return cbc_df
 
 # Function to read the C2VSim constrained head BC file
@@ -270,6 +292,7 @@ def read_gwmain_params():
                                 'PL' in line and \
                                     'PX' not in line:
                 skiprow = i+2 # skip ahead two lines (0-based index)
+                
             elif 'Anomaly in Hydraulic Conductivity' in line:
                 nrow = i-2-skiprow
                 skipfooter = len(lines)-nrow-skiprow
@@ -308,6 +331,106 @@ def read_gwmain_params():
     
     return gwmain_df
 
+
+# # Function to read the stratigraphy file - NOT NEEDED, CAN GET INFO FROM PREPROCESSOR OUTPUT
+# def read_strat():
+    
+#     # Read in preprocessor stratigraphy file
+#     root = tk.Tk()
+#     strat_pth = filedialog.askopenfilename(title='Select Preprocessor Stratigraphy File',
+#                                        initialdir='..\Resources\C2VSim\c2vsimfg_version1.5\Simulation\Groundwater', 
+#                                        filetypes=[('C2VSim dat', '.dat')])
+#     root.destroy()
+    
+#     return
+
+
+# Function to read the preprocessor output file nodal effective areas.
+def read_prep_out(params=None):
+    '''
+    
+
+    Parameters
+    ----------
+    params : list of string, optional
+        List specifying which sections of the preprocessor output file to read. 
+        List of options below. The default is None. 
+            - xyna = xy coordinates and effective nodal areas
+            - 
+        
+
+    Returns
+    -------
+    None.
+
+    '''
+    
+    # Read in preprocessor output file
+    root = tk.Tk()
+    prep_pth = filedialog.askopenfilename(title='Select Preprocessor Output File',
+                                       initialdir='..\Resources\C2VSim\c2vsimfg_version2.0\Preprocessor', 
+                                       filetypes=[('C2VSim out', '.out')])
+    root.destroy()
+    
+    na_cols = ['ID',
+               'PKH',
+               'PS',
+               'PN',
+               'PV',
+               'PL']
+    
+    #TODO: remove
+    params= ['xyna', 'elev']
+    prep_dict=dict(zip(params, [None, None]))
+    
+    with open(prep_pth, 'r') as f:
+        
+        lines = f.readlines()
+        
+        for i, line in enumerate(lines):
+        
+            if 'xyna' in params:
+                
+                if 'NODE' in line and \
+                    'X' in line and \
+                        'Y' in line and \
+                            'AREA' in line:
+                    xy_skiprow = i-1
+                    
+                #     
+                elif 'ELEMENT' in line and \
+                    'NODES' in line and \
+                        'AREA' in line:
+                    xy_nrow = i-4-xy_skiprow
+                        
+                
+            elif 'elev' in params:
+                
+                if '*** TOP AND BOTTOM' in line:
+                    el_skiprow = i+2
+                
+                elif 'REACH' in line and \
+                    'STREAM' in line and \
+                        'GRID' in line and \
+                            'GROUND' in line and \
+                                'INVERT' in line and \
+                                    'AQUIFER' in line:
+                    el_nrow = i-3-el_skiprow
+
+xyna_df = pd.read_csv(prep_pth, sep='\s+',skiprows=xy_skiprow,
+                  nrows=xy_nrow)
+
+prep_dict['xyna'] = xyna_df
+                                        
+                elev_df = pd.read_csv(prep_pth, sep='\s+',skiprows=el_skiprow,
+                                  nrows=el_nrow)
+                
+                prep_dict['elev'] = elev_df
+                
+    
+    
+    
+    return
 
 #TODO: Check model outputs, may have already been calculated by model
 # Otherwise, need to divide by vertical flow path and multiply by area, but
@@ -397,14 +520,25 @@ end_date = ''
 res_mon_dict = {}
 c3_res_df = read_c3_res(res_to_dl)
 
+dl_new = input('Download new CDEC data files ([n]/y)? ') or 'n'
+
 for stn in res_to_dl['ID']:
     
+    if len(stn) > 3: # Non-CDEC
+        continue
+    
+    dur_code = res_to_dl.loc[res_to_dl['ID']==stn, 'Duration_Code'].values[0]
+    
+    sens_no = res_to_dl.loc[res_to_dl['ID']==stn, 'Sensor_No'].values[0].split(':')[0]
+    
+    out_pth = stn+'_'+dur_code+'.csv'
+    
+    agg_out_pth = stn+'_agg_monthly'+'.csv'
+    
     #CDEC reservoirs
-    if isinstance(stn, str): 
+    if isinstance(stn, str) and dl_new =='y': # Check for case like woodward, want CalSim3 ID
         
-        dur_code = res_to_dl.loc[res_to_dl['ID']==stn, 'Duration_Code'].values[0]
         
-        sens_no = res_to_dl.loc[res_to_dl['ID']==stn, 'Sensor_No'].values[0].split(':')[0]
         
         cdec_res_data_url = rf'https://cdec.water.ca.gov/dynamicapp/req/CSVDataServlet?Stations={stn}&SensorNums={sens_no}&dur_code={dur_code}&Start={start_date}&End={end_date}'
         
@@ -479,8 +613,12 @@ for stn in res_to_dl['ID']:
                                           on='Datetime_EOM')
         
         # Write to file
-        res_df.to_csv(stn+'_'+dur_code+'.csv', index=False)
-        res_mon_df.to_csv(stn+'_agg_monthly'+'.csv', index=False)
+        res_df.to_csv(out_pth, index=False)
+        res_mon_df.to_csv(agg_out_pth, index=False)
+        res_mon_dict[stn] = res_mon_df
+    
+    elif isinstance(stn, str) and dl_new =='n':
+        res_mon_df = pd.read_csv(agg_out_pth)
         res_mon_dict[stn] = res_mon_df
     
     # Capture Woodward and others we want to correlate to CalSim, but aren't in CDEC        
@@ -560,7 +698,7 @@ for col in cbc_df:
 '''    
 
 
-#%% Add nodes via geopandas
+#%% Add nodes via geopandas - SKIP IF NOT ADDING NEW LAKES/NODES
 # Start off not changing original specs. 
 
 import os
@@ -602,7 +740,7 @@ c2v_lake_nodes.rename(columns={'NodeID': 'INODE'},
 c2v_lake_nodes.loc[:, 'Notes'] = '/'+c2v_lake_nodes['gnis_name']
 
 #TODO: replace with cbc_df once we have access to v1.5 files (global)
-lakes_to_drop = cbc_v15_df['Notes'].unique()
+lakes_to_drop = cbc_df['Notes'].unique()
 
 #TODO: Keep Woodward in the future (currently being implemented via diversions)
 lakes_to_drop = np.append(lakes_to_drop, '/Woodward Reservoir')
@@ -631,7 +769,7 @@ max_col = max((cbc_df['ITSCOL'].astype(int).max(),
                cbc_df['ITSCOLF'].astype(int).max(),
                len([x for x in cbcts_df.columns if x.startswith('HWTS')])))
 
-#TODO: LEFT OFF HERE!!
+# New lakes to add to timeseries file
 cbc_ids = cbc_v2_df['ID'].unique()
 
 itscol = np.arange(max_col+1, max_col+len(cbc_ids)+1, 1)
@@ -668,9 +806,16 @@ for col in cbc_df.columns:
         
     # Lakebed conductance
     elif col == 'BC':
-        # As a first approx, get Kv for layer one from the gw input file, divide by lakebed thickness, and multiply by effective area.
+        # As a first approx, get Kv for layer one from the gw input file (gw main), 
+        # divide by layer thickness (strat), and multiply by nodal effective area (preprocessor out).
         # Once done, check local models/GSPs/other sources for more refined estimates.
         gwmain_df = read_gwmain_params()
+        
+        prep_out_eff_area_df = read_prep_out()
+        
+        
+        
+        
 
 # Sort
 cbc_v2_df.sort_values(by=['INODE'], inplace=True)
