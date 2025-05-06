@@ -25,6 +25,7 @@ import os
 import geopandas as gpd
 import re
 import time
+import datetime
 
 # HTTP/URL library imports
 import requests
@@ -44,6 +45,14 @@ import matplotlib
 import openpyxl
 
 #%% Helper Functions
+
+def cur_date():
+    
+    cur_date = datetime.datetime.now()
+    
+    cur_date = cur_date.strftime('%Y%m%d')
+    
+    return cur_date
 
 def read_c3_res(res_df):
     
@@ -267,7 +276,7 @@ def read_gwmain_params():
     # Read in Constrained head BC specs file
     root = tk.Tk()
     gwmain_pth = filedialog.askopenfilename(title='Select GW Main Input File',
-                                       initialdir='..\Resources\C2VSim\c2vsimfg_version1.01\Simulation\Groundwater', 
+                                       initialdir='..\Resources\C2VSim\c2vsimfg_version2.0\Simulation\Groundwater', 
                                        filetypes=[('C2VSim dat', '.dat')])
     root.destroy()
     
@@ -327,7 +336,9 @@ def read_gwmain_params():
     #TODO: generalize/grab layer info from other files
     lyr_num = input('Input number of model layers [4]: ') or '4'
     lyr_num = int(lyr_num)
-    gwmain_df['Lyr'] = [1,2,3,4] * int(len(gwmain_df) / lyr_num)
+    gwmain_df['Lyr'] = list(np.arange(1,lyr_num+1)) * int(len(gwmain_df) / lyr_num)
+    
+    gwmain_df = gwmain_df.convert_dtypes()
     
     return gwmain_df
 
@@ -356,10 +367,21 @@ def read_strat():
     #TODO: n cols of form aquiclude layer (n/nlyrs?)
     # Of form A1, L1, A2, L2, A3, L3, A(N/2), L(N/2)
     rnm_cols = ['ID',
-                'ELV'] + [f'{(x // 2)+1}' for x in strat_df.columns[2:]]
+                'ELV']
     
-    strat_df.rename(columns={0: 'ID',
-                             1: 'ELV'})
+    lyr_cols = [f'{(int(x) // 2)}' for x in strat_df.columns[2:]]
+    
+    for i, val in enumerate(lyr_cols):
+        
+        if i % 2 == 0:
+            lyr_cols[i] = 'A' + val
+        else:
+            lyr_cols[i] = 'L' + val
+            
+    rnm_cols = rnm_cols + lyr_cols
+    
+    strat_df.rename(columns=dict(zip(strat_df.columns, rnm_cols)),
+                    inplace=True)
     
     return strat_df
 
@@ -432,17 +454,72 @@ def read_prep_out(params=None):
                     el_nrow = i-2-el_skiprow
 
     
-    xyna_df = pd.read_csv(prep_pth, sep='\s+',skiprows=xy_skiprow,
-                      nrows=xy_nrow)
+    if 'xyna' in params:
+        xyna_df = pd.read_csv(prep_pth, sep='\s+',skiprows=xy_skiprow,
+                          nrows=xy_nrow)
     
-    prep_dict['xyna'] = xyna_df
+        prep_dict['xyna'] = xyna_df
                                         
-    elev_df = pd.read_csv(prep_pth, sep='\s+',skiprows=el_skiprow,
-                      header=None, nrows=el_nrow, low_memory=False)
+    if 'elev' in params:
+        elev_df = pd.read_csv(prep_pth, sep='\s+',skiprows=el_skiprow,
+                          header=None, nrows=el_nrow, low_memory=False)
     
-    prep_dict['elev'] = elev_df
+        prep_dict['elev'] = elev_df
                 
     return prep_dict
+
+def calc_lakebed_conductance(gwmain, strat, narea):
+    '''
+    
+    Function to calculate the conductance for the constrained general head
+    boundary condition. For this initial estimation, approximate as
+    Kv / b * A [L^2/T], where:
+        Kv = vertical hydraulic conductivity
+        b = model layer aquifer thickness
+        A = nodal effective area
+
+    Parameters
+    ----------
+    gwmain : pandas dataframe
+        Main groundwater input file read previously containing node 
+        aquifer properties, including Kv.
+    strat : pandas dataframe
+        Stratigraphy preprocessor input file.
+    narea : pandas dataframe
+        Nodal area extracted from preprocessor output file.
+
+    Returns
+    -------
+    bc_df : pandas dataframe
+        Lakebed conductance value, utilized in the CBC input file.
+
+    '''
+    
+    # PL = aquifer vertical K
+    kv = gwmain.loc[gwmain['Lyr']==1, ['ID','PL']].copy()
+    
+    # Layer 1 aquifer thickness
+    l1 = strat[['ID', 'L1']].copy()
+    
+    # Currently, ft/day units in v2.0
+    kv_wstrat = kv.merge(right=l1, on='ID')
+    
+    # Find the merge col
+    area_col = [x for x in narea.columns if 'area' in x.lower()][0]
+    
+    # Convert to common units
+    if 'acre' in area_col.lower():
+        narea['Area_SF'] = narea[area_col] * 43560
+    
+    bc_df = kv_wstrat.merge(right=narea[['NODE',
+                                         'Area_SF']], 
+                            left_on='ID', 
+                            right_on='NODE')
+    
+    # Calculate BC
+    bc_df['BC'] = bc_df['PL'] / bc_df['L1'] * bc_df['Area_SF'] # FT^2 / DAY
+    
+    return bc_df
 
 #TODO: Check model outputs, may have already been calculated by model
 # Otherwise, need to divide by vertical flow path and multiply by area, but
@@ -515,11 +592,13 @@ wb = openpyxl.load_workbook(filename = 'cdec_reservoirs.xlsx')
 wb.save('cdec_reservoirs.xlsx')
 
 
-res_to_dl = pd.read_excel('cdec_reservoirs.xlsx', sheet_name='download_selection',
-                          skiprows=1)
+
 
 #%% Check reading
 #TODO: refresh excel sheet (open & save) via code. Otherwise, vlookup names will be nan
+res_to_dl = pd.read_excel('cdec_reservoirs.xlsx', sheet_name='download_selection',
+                          skiprows=1)
+
 res_to_dl.head()
 
 #%% Request download data from CDEC, interpolate missing values, and 
@@ -617,8 +696,8 @@ for stn in res_to_dl['ID']:
                                 inplace=True)
             
             interp_df = stor2elev(stn, 
-                                  res_mon_df,
-                                  c3_stor_elev)
+                                  res_mon_df.copy(),
+                                  c3_stor_elev.copy())
             
             res_mon_df = res_mon_df.merge(interp_df[['Datetime_EOM',
                                                      'VALUE_ELEV']], 
@@ -637,13 +716,15 @@ for stn in res_to_dl['ID']:
     else:
         continue
 
-#%% Read in the current timeseries file, add new records, and columns
+#%% Read in the current timeseries file
 cbcts_df = read_cbcts_c2v()
 
 # Add temporary datetime col for merging
 cbcts_df['Datetime'] = pd.to_datetime(cbcts_df['ITHTS'],
                                       format='%m/%d/%Y_24:00')
 
+# The bounds from this file are used later when building the spec file.
+# After the spec file is built, we'll return to processing the timeseries
 
 
 #%% Read in current specs file
@@ -739,8 +820,8 @@ ps = input('Once manually input, press [Enter] to continue...') or 'n'
 c2v_lake_nodes = gpd.read_file(os.path.join('..', 'GIS', 'output', 'c2v_cbc_nodes_final.shp'))
 
 #TODO: remove (temporary as computer having shut down issues)
-c2v_lake_nodes.to_csv(os.path.join('.', 'output', 'c2v_cbc_nodes_final.csv'),
-                      index=False)
+# c2v_lake_nodes.to_csv(os.path.join('.', 'output', 'c2v_cbc_nodes_final.csv'),
+#                       index=False)
 
 #%% Process into CBC input file
 c2v_lake_nodes = c2v_lake_nodes.loc[c2v_lake_nodes['gnis_name'] !='0', ['NodeID',
@@ -823,23 +904,38 @@ for col in cbc_df.columns:
         # Once done, check local models/GSPs/other sources for more refined estimates.
         gwmain_df = read_gwmain_params()
         
-        prep_out_eff_area_df = read_prep_out()
+        strat_df = read_strat()
         
+        nodal_area_df = read_prep_out(['xyna'])['xyna']
         
+        # Now, calculate the conductance
+        bc_df = calc_lakebed_conductance(gwmain_df,
+                                         strat_df,
+                                         nodal_area_df)
+        
+        cbc_v2_df = cbc_v2_df.merge(right=bc_df[['NODE', 'BC']],
+                                    left_on='INODE',
+                                    right_on='NODE',
+                                    how='left')
         
         
 
 # Sort
 cbc_v2_df.sort_values(by=['INODE'], inplace=True)
 
+cbc_df = cbc_df.convert_dtypes()
+cbc_v2_df = cbc_v2_df.convert_dtypes()
+
 # Prep for concat
-cbc_v2_df.rename(columns={'gnis_name': 'Notes'}, inplace=True)
-cbc_v2_df['Notes'] = '/' + cbc_v2_df['Notes']
+# cbc_v2_df.rename(columns={'gnis_name': 'Notes'}, inplace=True)
+# cbc_v2_df['Notes'] = '/' + cbc_v2_df['Notes']
 
 # Continue building spec output
 cbc_final_df = pd.concat([cbc_df,
-                          cbc_v2_df[[x for x in cbc_v2_df.columns if x not in ['ID',
-                                                                           'LAKE']]]])
+                          cbc_v2_df[[x for x in cbc_v2_df.columns if x.lower() not in ['id',
+                                                                           'lake',
+                                                                           'node',
+                                                                           'gnis_name']]]])
 
 
 #%% Finish building timeseries now that we know where to put the data
@@ -861,39 +957,98 @@ ts_key = ts_key.merge(right=res_to_dl[['Name',
                       right_on='Name',
                       how='left')
 
-#TODO: LEFT OFF HERE!!
 # Now, add/insert timeseries as appropriate
-cbcts_final_df = pd.DataFrame()
+print('Note, that this process is not the most exhaustive for the existing datasets')
+print('Additional data may have been found via storage conversions; however, ')
+print(' it was deemed unnecessary due to the existing datasets.')
+
+
+cbcts_new_df = pd.DataFrame()
 
 for i,row in enumerate(ts_key.itertuples()):
     
     cdec_id = row.ID
     
+    # Assign ITSCOL
     rnm_col = 'VALUE'
     if 'VALUE_ELEV' in res_mon_dict[cdec_id].columns:
         rnm_col = 'VALUE_ELEV'
         
     
-    new_ts = res_mon_dict[cdec_id][['Datetime_EOM', 'VALUE']].copy()
+    new_ts = res_mon_dict[cdec_id][['Datetime_EOM', rnm_col]].copy()
     new_ts.rename(columns={'Datetime_EOM': 'Datetime',
                            rnm_col: f'HQTS({str(row.ITSCOL)})'},
                   inplace=True)
     
+    # Add in ITSCOLF
+    new_ts[f'HQTS({str(row.ITSCOLF)})'] = '9999'
+    
     if i == 0:
-        # Think about this some more, would need to eval all time series bounds        
-        cbcts_final_df['Datetime'] = new_ts['Datetime'].copy()
+        # Initialize the datetime column        
+        cbcts_new_df = new_ts.copy()
+        
+    else:
+        
+        cbcts_new_df = cbcts_new_df.merge(right=new_ts,
+                                          on='Datetime',
+                                          how='outer')
+        
+
+#TODO: Consolidate loops and make more efficient
+for i,row in enumerate(ts_key.itertuples()):
     
+    cbcts_new_df[f'HQTS({str(row.ITSCOL)})'].fillna('9999',
+                                                      inplace=True)
     
+    cbcts_new_df[f'HQTS({str(row.ITSCOLF)})'].fillna('0',
+                                                       inplace=True)
     
-    
-    
-    print(row.ITSCOL)
-    
+# Time bounds
+tmin = cbcts_df['Datetime'].min()
+tmax = cbcts_df['Datetime'].max()
+
+#TODO: need to fix this, full TS for new ones and only new TS for existing
+
+merge_cols = ['Datetime'] + [x for x in cbcts_new_df.columns if x not in cbcts_df.columns]
+
+cbcts_final_df = cbcts_df.merge(right=cbcts_new_df[merge_cols],
+                                on='Datetime',
+                                how='right')
+
+cbcts_final_df.set_index('Datetime',
+                         inplace=True)
+
+cbcts_new_df.set_index('Datetime',
+                       inplace=True)
+
+# Set of columns to replace nan values (after previous simulation end)
+fill_cols = [x for x in cbcts_df.columns if x.startswith('HQTS')]
+
+for fcol in fill_cols:
+    cbcts_final_df.fillna({fcol: cbcts_new_df[fcol]},
+                          inplace=True) 
+
+#TODO: change to programmatically
+# Trim to last complete month
+cbcts_final_df = cbcts_final_df.loc[tmin:'2025-03-31']
+
+# Regen C2VSim time column
+cbcts_final_df = cbcts_final_df.fillna({'ITHTS': pd.DataFrame(index=cbcts_final_df.index,
+                                             columns=['datef']).apply(lambda x: x.index.strftime('%m/%d/%Y_24:00'))['datef']})
+
+# Export/write to file
+
+# No need to reorder columns, concat to the original dataset
+cbc_final_df.to_csv(os.path.join('.', 'output', f'cbc_specs_{cur_date()}.csv'),
+                    index=False)
 
 
+#Reorder columns
+col_ord = [cbcts_final_df.columns[0]]+ \
+    [f'HQTS({x})' for x in np.arange(1, len(cbcts_final_df.columns))]
 
-
-
+cbcts_final_df[col_ord].to_csv(os.path.join('.', 'output', f'cbc_timeseries_{cur_date()}.csv'),
+                               index=False)
 
 
 
