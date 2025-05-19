@@ -18,3 +18,11 @@ The existing reservoir datasets will be updated to current and the new reservoir
 
 ## Specific Process
 Additional process steps related to 
+
+## Output (*.\Code\output*)
+1. cbc_specs_YYYYMMDD.csv
+  - Constrained general head boundary conditions data file, which replaces the main specification portion of the file.
+  - The NGB parameter will still need to be updated manually.
+3. cbc_timeseries_YYYYMMDD.csv
+  - Constrained general head time series file, which replaces the existing time series data.
+  - Preserves the 
