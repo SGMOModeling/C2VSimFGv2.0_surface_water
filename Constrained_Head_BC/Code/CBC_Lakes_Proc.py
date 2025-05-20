@@ -495,10 +495,10 @@ def calc_lakebed_conductance(gwmain, strat, narea):
 
     '''
     
-    # PL = aquifer vertical K
+    # PL = aquifer vertical K - ft/day
     kv = gwmain.loc[gwmain['Lyr']==1, ['ID','PL']].copy()
     
-    # Layer 1 aquifer thickness
+    # Layer 1 aquifer thickness - ft
     l1 = strat[['ID', 'L1']].copy()
     
     # Currently, ft/day units in v2.0
@@ -521,25 +521,8 @@ def calc_lakebed_conductance(gwmain, strat, narea):
     
     return bc_df
 
-#TODO: Check model outputs, may have already been calculated by model
-# Otherwise, need to divide by vertical flow path and multiply by area, but
-# this might be challenging as each node will have an effective area.
-# Need to check the docs and ensure consistency here.
 
-# Can also pull from stream node files, if applicable. Lake Natoma the most
-# applicable for this case.
 
-# Function to take vertical conductivity and convert it to conductance
-def kv_to_cond():
-    
-    
-    
-    return
-
-def gen_cbc_ts():
-    
-    
-    return
 
 
 #%% Set current directory
