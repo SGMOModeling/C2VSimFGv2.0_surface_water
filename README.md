@@ -44,5 +44,5 @@ To update the CBC files, a combination of python scripting and manual tweaks/sel
 2. *cbc_timeseries_YYYYMMDD.csv*
   - Constrained general head time series file, which replaces the existing time series data.
   - Preserves the original data, extends with new CDEC timeseries data, and adds entire timeseries datasets for new lakes/reservoirs.
-3. *Woodward_Seepage.csv*
+3. **NOT YET GENERATED/STILL INWORK** *Woodward_Seepage.csv*
   - Diversion spec and timeseries data mapped to C2VSimFG (from ESJWRM).
