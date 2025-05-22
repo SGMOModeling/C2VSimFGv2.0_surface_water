@@ -14,7 +14,7 @@ To model the reservoirs as CBCs, the approximate model nodes to which the bounda
 The existing reservoir datasets will be updated to current (beyond end of simuation, WY 2021) and the new reservoirs' entire timeseries datasets will be input.
 
 ## Specific Process
-To update the CBC files, a combination of python scripting and manual tweaks/selections is utilized:
+To update the CBC files, a combination of python scripting (*.\Code\CBC_Lakes_Proc.py*) and manual tweaks/selections is utilized:
 1. Select reservoirs to download in the *cdec_reservoirs.xlsx* file
 2. Download/process the applicable reservoir elevation (or storage) timeseries from CDEC
     - This requires some iteration as various CDEC station sensors have different timeseries periods of length, for different variables. Plots of the selected sensors were reviewed and the longest period of record and/or most complete relative to the simulation period were utilized. 
@@ -22,27 +22,37 @@ To update the CBC files, a combination of python scripting and manual tweaks/sel
     - In the case where a reservoir only had reservoir storage data available, CalSim3 reservoir storage and elevation relationship tables were utilized to convert storage to elevation (head).
       * The CalSim3 storage-->elevation tables were interpolated via 1st-order splines (considerate of time-index value spacing) to develop elevation values for each reservoir.
       * Values were aggregated to a monthly average, if not already on a monthly basis.
-      * Then, values were linearly interpolated to the monthly simulation stress period.
+      * Then, values were linearly interpolated to the monthly simulation stress period, as CDEC time series data may not have been consistently recorded for every month.
 4. Read previous version CBC specs and timeseries files.
 5. Merge previous version and updated version CBC timeseries.
 6. Develop set of nodes for reservoirs/lakes
-    - As a starting point, intersects the C2VSimFG model nodes and the applicable NHD lake/reservoir boundary polygons is performed. Then the user must manually edit the shapefile, then the script continues.
+    - As a starting point, intersection of the C2VSimFG model nodes and the applicable NHD lake/reservoir boundary polygons is performed (GNIS name input in the *cdec_reservoirs.xlsx* file to tie datasets together - name in C2VSim input file does not always match, so we need to correlate or do some sort of fuzzy matching - right now, this is done manually). Then the shapefile is manually edited, considerate of satellite imagery and C2VSimFG nodes to develop the final set of CBC nodes. Once saved, script reads in the updated/final shapefile and continues.
 7. Estimate lakebed conductance
     - Initially estimated as Kv / &Delta;b * A, where:
       * Kv = vertical hydraulic conductivity (of top model layer, layer #1) *[From model preprocessor input file]*
       * &Delta;b = vertical thickness/conductance linear pathway, estimated as layer 1 thickness *[From model stratigraphy preprocessor input file]*
       * A = effective nodal area *[From preprocessor output file]*
-    - A second estimate was made similar to the v1.01 model update where Kv / &Delta;b * A / 10,000 and:
+    - **[NOT YET IMPLEMENTED]** A second estimate was made similar to the v1.01 model update where Kv / &Delta;b * A / 10,000 and:
       * &Delta;b = vertical thickness/conductance linear pathway, **estimated as 1 foot**.
 8. Extract ESJWRM diversion for Woodward reservoir.
     - Woodward Reservoir data not found in CDEC; however, ESJWRM modeled Woodward Reservoir seepage. This diversion (ESJWRM diversion #32) was extracted and mapped to C2VSimFG.
+    - Input parameters largely retained, nodes selected via GIS comparison, and full ESJWRM timeseries input. No accounting for data pre-ESJWRM simulation period currently made (i.e., seepage time series values pre-ESJWRM simulation period set to zero).
+    - Elements selected for Woodward Reservoir seepage:
+      ![image](https://github.com/user-attachments/assets/abcffa8e-7a79-4084-bf52-2dac37d5a2a7)
 
-## Output (*.\Code\output*)
-1. *cbc_specs_YYYYMMDD.csv*
-  - Constrained general head boundary conditions data file, which replaces the main specification portion of the file.
-  - The NGB parameter will still need to be updated manually.
-2. *cbc_timeseries_YYYYMMDD.csv*
-  - Constrained general head time series file, which replaces the existing time series data.
-  - Preserves the original data, extends with new CDEC timeseries data, and adds entire timeseries datasets for new lakes/reservoirs.
-3. **NOT YET GENERATED/STILL INWORK** *Woodward_Seepage.csv*
-  - Diversion spec and timeseries data mapped to C2VSimFG (from ESJWRM).
+
+## Output
+1. (*.\Code\output\)
+    - *cbc_specs_YYYYMMDD.csv*
+        * Constrained general head boundary conditions data file, which replaces the main specification portion of the file.
+        * The NGB parameter will still need to be updated manually.
+    - *cbc_timeseries_YYYYMMDD.csv*
+        * Constrained general head time series file, which replaces the existing time series data.
+        * Preserves the original data, extends with new CDEC timeseries data, and adds entire timeseries datasets for new lakes/reservoirs.
+3. (*.\Final)
+    - *C2VSimFG_DiversionSpec.DAT*
+        * Diversion spec file data mapped to C2VSimFG (from ESJWRM), for Woodward Reservoir seepage.
+    - *C2VSimFG_Diversions.DAT*
+        * Diversion timeseries data with Woodward Reservoir seepage added (as the last column for quick testing, can be updated to precede bypasses, but will require bypass spec editing)
+    - *Woodward.xlsx*
+        * Spreadsheet to process/develop C2VSimFG diversion specs and timeseries data.
